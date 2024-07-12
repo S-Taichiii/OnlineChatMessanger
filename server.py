@@ -1,41 +1,119 @@
 import socket
+import sys
+import threading
+import random
+import uuid
+import time
+from protocol import TcpProtocol
 
-class UdpServer:
-    def __init__(self):
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.buffer = 4096
-        self.server_address = '0.0.0.0'
-        self.server_port = 9001
-        self.clients = {}
+class User:
+    def __init__(self, user_name: str = "", ip_address: str = "", token: str = "",) -> None:
+        self.user_name = user_name
+        self.ip_address = ip_address
+        self.token = token
+        self.start_time = sys.float_info.max
 
-        print('stratig up on {}'.format(self.server_port))
+    def set_time(self, time) -> None:
+        self.start_time = time
+
+
+class Room:
+    def __init__(self, host: User, room_name: str = "", password: str = "") -> None:
+        self.host = host
+        self.password = password
+        self.room_name = room_name
+        self.members: list[User] = []
+
+    def set_member(self, member: User) -> None:
+        self.members.append(member)
+
+class RoomList:
+    rooms: list[Room] = []
+
+class TcpServer:
+    def __init__(self) -> None:
+        self.socket : socket.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_address: str = "0.0.0.0"
+        self.server_port: int = 8000
+        self.buffer: int = 32
+        self.connection = None
+
+        self.room_name_lenth: int = 1
+        self.operation: int = 1
+        self.state: int = 0
+        self.room_name: str = ""
+        self.user_name: str = ""
+        self.password: str = ""
+        self.token: str = ""
+
+        self.room_list = RoomList.rooms
 
         self.socket.bind((self.server_address, self.server_port))
+        self.socket.listen(1)
 
-    def connect(self):
-        while True:
-            try:
-                print("\nwating to receive message")
-                data, client_address = self.socket.recvfrom(self.buffer)
+    def init(self) -> None:
+        self.room_name_lenth: int = 1
+        self.operation: int = 1
+        self.state: int = 0
+        self.room_name: str = ""
+        self.user_name: str = ""
+        self.token: str = ""
 
-                if client_address not in self.clients.keys():
-                    self.clients[client_address] = True
-                    print('New Client connected: {}'.format(client_address))
-                
-                print("Received data: {}".format(data.decode('utf-8')))
+    def get_header_info(self, header) -> None:
+        self.room_name_length = TcpProtocol.get_room_name_length(header)
+        self.operation = TcpProtocol.get_operation(header)
+        self.state = TcpProtocol.get_state(header)
+        self.room_name = TcpProtocol.get_room_name(header)
+        self.user_name = TcpProtocol.get_user_name(header)
+        self.password = TcpProtocol.get_password(header)
 
-                self.send(data)
+    def create_room(self, connection) -> None:
+        self.state = 1
 
-            except Exception as e:
-                print("Error: " + e)
+        connection.send(TcpProtocol.set_header(
+            self.room_name_length,
+            self.operation,
+            self.state,
+            self.room_name,
+            self.user_name,
+            self.password
+        ))
 
-    def send(self, data):
-        for addr in self.clients.keys():
-            self.socket.sendto(data, addr)
-    
+        # tokenの発行
+        self.token = str(uuid.uuid4())
+
+        # roomを作成
+        host_user = User(self.user_name, socket.inet_ntoa(struct.pack('>I', random.randrange(0x7F000001, 0x7FFFFFFE))), self.token)
         
+        room = Room(host_user, self.password, self.room_name)
+        self.room_list.append(room)
+
+        self.state = 2
+
+        connection.send(TcpProtocol.set_header(
+            self.room_name_length,
+            self.operation,
+            self.state,
+            self.room_name,
+            self.user_name,
+            self.password
+        ))
+
+    def join_room(self, connection) -> None:
+        pass
+
+    def connect(self) -> None:
+        try:
+            connection, client_addr = self.socket.accept()
+            
+            while True:
+                print("TCP: Connection from {}".format(client_addr))
+                self.get_header_info(connection.recv(self.buffer))
+        finally:
+            self.close(connection)
 
 
-if __name__ == "__main__":
-    udp_server = UdpServer()
-    udp_server.connect()
+    def close(self, connection) -> None:
+        print("Closing current connection")
+        connection.close()
+
