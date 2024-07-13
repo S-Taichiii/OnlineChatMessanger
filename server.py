@@ -1,4 +1,5 @@
 import socket
+import struct
 import sys
 import threading
 import random
@@ -18,8 +19,8 @@ class User:
 
 
 class Room:
-    def __init__(self, host: User, room_name: str = "", password: str = "") -> None:
-        self.host = host
+    def __init__(self, host_token: str = "", room_name: str = "", password: str = "") -> None:
+        self.host_token = host_token
         self.password = password
         self.room_name = room_name
         self.members: list[User] = []
@@ -85,7 +86,8 @@ class TcpServer:
         # roomを作成
         host_user = User(self.user_name, socket.inet_ntoa(struct.pack('>I', random.randrange(0x7F000001, 0x7FFFFFFE))), self.token)
         
-        room = Room(host_user, self.password, self.room_name)
+        room = Room(self.token, self.password, self.room_name)
+        room.set_member(host_user)
         self.room_list.append(room)
 
         self.state = 2
@@ -100,7 +102,27 @@ class TcpServer:
         ))
 
     def join_room(self, connection) -> None:
-        pass
+        self.state = 1
+
+        connection.send(TcpProtocol.set_header(
+            self.room_name_length,
+            self.operation,
+            self.state,
+            self.room_name,
+            self.user_name,
+            self.password
+        ))
+
+        # tokenの発行
+        self.token = str(uuid.uuid4())
+        
+        member_user = User(self.user_name, socket.inet_ntoa(struct.pack('>I', random.randrange(0x7F000001, 0x7FFFFFFE))), self.token)
+
+        for room in self.room_list:
+            if self.room_name == room.room_name and self.password == room.password:
+                room.set_member(member_user)
+
+
 
     def connect(self) -> None:
         try:
@@ -110,10 +132,10 @@ class TcpServer:
                 print("TCP: Connection from {}".format(client_addr))
                 self.get_header_info(connection.recv(self.buffer))
         finally:
-            self.close(connection)
+            self.close()
 
 
-    def close(self, connection) -> None:
+    def close(self) -> None:
         print("Closing current connection")
-        connection.close()
+        self.socket.close()
 
