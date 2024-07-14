@@ -5,7 +5,7 @@ import threading
 import random
 import uuid
 import time
-from protocol import TcpProtocol
+from protocol import TCPR
 
 class User:
     def __init__(self, user_name: str = "", ip_address: str = "", token: str = "",) -> None:
@@ -37,9 +37,7 @@ class TcpServer:
         self.server_address: str = "0.0.0.0"
         self.server_port: int = 8000
         self.buffer: int = 32
-        self.connection = None
 
-        self.room_name_lenth: int = 1
         self.operation: int = 1
         self.state: int = 0
         self.room_name: str = ""
@@ -53,7 +51,6 @@ class TcpServer:
         self.socket.listen(1)
 
     def init(self) -> None:
-        self.room_name_lenth: int = 1
         self.operation: int = 1
         self.state: int = 0
         self.room_name: str = ""
@@ -61,20 +58,18 @@ class TcpServer:
         self.token: str = ""
 
     def get_header_info(self, header) -> None:
-        self.room_name_length = TcpProtocol.get_room_name_length(header)
-        self.operation = TcpProtocol.get_operation(header)
-        self.state = TcpProtocol.get_state(header)
-        self.room_name = TcpProtocol.get_room_name(header)
-        self.user_name = TcpProtocol.get_user_name(header)
-        self.password = TcpProtocol.get_password(header)
+        self.operation = TCPR.get_operation(header)
+        self.state = TCPR.get_state(header)
+        self.room_name, self.user_name, self.password = TCPR.get_payload(header)
 
     def create_room(self, connection) -> None:
         self.state = 1
 
-        connection.send(TcpProtocol.set_header(
-            self.room_name_length,
+        connection.send(TCPR.set_header(
+            len(self.room_name),
             self.operation,
             self.state,
+            len(self.user_name),
             self.room_name,
             self.user_name,
             self.password
@@ -92,50 +87,67 @@ class TcpServer:
 
         self.state = 2
 
-        connection.send(TcpProtocol.set_header(
-            self.room_name_length,
+        connection.send(TCPR.set_header(
+            len(self.room_name),
             self.operation,
             self.state,
+            len(self.user_name),
             self.room_name,
             self.user_name,
             self.password
         ))
+        
+        connection.send(host_user.ip_address.encode('utf-8'))
+
 
     def join_room(self, connection) -> None:
-        self.state = 1
+        # status code 
+        # 0: success
+        # 1: failed not exist room_name
+        # 2: failed incorrect password
 
-        connection.send(TcpProtocol.set_header(
-            self.room_name_length,
-            self.operation,
-            self.state,
-            self.room_name,
-            self.user_name,
-            self.password
-        ))
-
-        # tokenの発行
-        self.token = str(uuid.uuid4())
-        
-        member_user = User(self.user_name, socket.inet_ntoa(struct.pack('>I', random.randrange(0x7F000001, 0x7FFFFFFE))), self.token)
+        send_code: str = "1"
 
         for room in self.room_list:
-            if self.room_name == room.room_name and self.password == room.password:
+            if room.room_name == self.room_name and room.password == self.password:
+                send_code = "0"
+
+                # tokenの発行
+                self.token = str(uuid.uuid4())
+
+                # join the room
+                member_user = User(self.user_name, socket.inet_ntoa(struct.pack('>I', random.randrange(0x7F000001, 0x7FFFFFFE))), self.token)
                 room.set_member(member_user)
+                connection.send(member_user.ip_address)
+            elif self.room_name != room.room_name:
+                continue
+            elif self.password != room.password:
+                send_code = "2"
 
-
+        connection.send(send_code.encode("utf-8"))
 
     def connect(self) -> None:
-        try:
+        while True:
             connection, client_addr = self.socket.accept()
             
-            while True:
-                print("TCP: Connection from {}".format(client_addr))
+            try:
+                print("[TCP]: Connection from {}".format(client_addr))
                 self.get_header_info(connection.recv(self.buffer))
-        finally:
-            self.close()
+                
+                if self.operation == 1:
+                    self.create_room(connection)
+                elif self.operation == 2:
+                    self.join_room(connection)
+
+                self.init()
+
+            except Exception as e:
+                print("[TCP]Error: ", str(e))
+            finally:
+                self.close()
 
 
     def close(self) -> None:
-        print("Closing current connection")
+        print("[TCP]Closing current connection\n")
         self.socket.close()
 
